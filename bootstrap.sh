@@ -59,6 +59,22 @@ def resolve_device():
 DEVICE = resolve_device()
 print(f"[warm] device = {DEVICE}", flush=True)
 
+# Guardia de VRAM: si hay GPU pero quedan <2.5 GB libres al calentar, avisar y
+# seguir (NO crashear). Solo informativo: los motores igual cargan.
+if DEVICE == "gpu":
+    try:
+        import subprocess
+        _out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        )
+        _free_gb = int(_out.stdout.strip().splitlines()[0]) / 1024.0
+        print(f"[warm] VRAM libre = {_free_gb:.1f} GB", flush=True)
+        if _free_gb < 2.5:
+            print("⚠️ VRAM ajustada", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warm] chequeo VRAM fallo ({e}) -> sigo", flush=True)
+
 from paddleocr import PaddleOCR
 
 # Kwargs de calidad IDENTICOS a app.py / motores certificados.
@@ -95,8 +111,27 @@ PYWARM
   log "🧊→🔥 Modelos cacheados. Marcador creado: $READY"
 fi
 
-log "🚀 Lanzando uvicorn app:app en :$PORT (2 workers) ..."
-python -m uvicorn app:app --host 0.0.0.0 --port "$PORT" --workers 2 &
+# ===== Parametros de arranque =====
+WORKERS="${UVICORN_WORKERS:-5}"
+
+# VRAM libre (GB) via nvidia-smi (ligero, sin importar paddle). Vacio si no hay GPU.
+_mib="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -dc '0-9')" || _mib=""
+_free_gb=""
+[ -n "$_mib" ] && _free_gb="$(awk "BEGIN{printf \"%.1f\", $_mib/1024}")"
+
+# Device: honra DUO_DEVICE=cpu; si hay lectura de VRAM asume gpu, si no cpu (mismo criterio que app.py).
+if [ "${DUO_DEVICE:-auto}" = "cpu" ]; then
+  _device="cpu"
+elif [ -n "$_free_gb" ]; then
+  _device="gpu"
+else
+  _device="cpu"
+fi
+
+log "🔩 workers=$WORKERS | device=$_device | VRAM libre=${_free_gb:-N/A} GB"
+
+log "🚀 Lanzando uvicorn app:app en :$PORT ($WORKERS workers) ..."
+python -m uvicorn app:app --host 0.0.0.0 --port "$PORT" --workers "$WORKERS" &
 UVPID=$!
 
 # Espera activa a que /health responda para anunciar "listo" (hasta ~4 min).

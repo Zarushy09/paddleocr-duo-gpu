@@ -61,6 +61,11 @@ in_flight = 0
 # Techo de resolucion DE MOTOR (identico a los motores certificados: 4096px lado largo).
 MAX_IMAGE_DIMENSION = 4096
 
+# Numero de workers uvicorn (parametrizable). bootstrap.sh lanza uvicorn con
+# --workers ${UVICORN_WORKERS:-5}; lo leemos aqui SOLO para reportarlo en /health
+# (cada proceso worker es una instancia de este app y comparte el mismo env).
+UVICORN_WORKERS = int(os.getenv("UVICORN_WORKERS", "5"))
+
 # ===== AUTO-SANACION 180° v2 (SOLO medium — identico al motor v6 medium certificado) =====
 ROT_HDR_RE = re.compile(r'FACTURA|RNC|NCF|FECHA DE EMISI', re.I)
 ROT_TOT_RE = re.compile(r'TOTAL|SUB-?TOTAL', re.I)
@@ -163,6 +168,7 @@ async def health():
         "version": "gpu-1",
         "device": DEVICE,
         "engines": ["small", "medium"],
+        "workers": UVICORN_WORKERS,
         "shed_inflight": DUO_SHED_INFLIGHT,
         "max_dimension": MAX_IMAGE_DIMENSION,
     }
