@@ -36,6 +36,9 @@ fetch requirements.txt
 if [ -f "$READY" ]; then
   log "✅ $READY presente — salto pip install y calentado (re-start rapido)."
 else
+  log "🧩 Instalando libs nativas de OpenCV (fix libGL.so.1) ..."
+  apt-get update && apt-get install -y libgl1 libglib2.0-0
+
   log "📦 Instalando dependencias (pip install -r requirements.txt) ..."
   python -m pip install --no-cache-dir -r requirements.txt
 
