@@ -25,9 +25,9 @@ se **mide y reporta** en `fusion_stats`).
 ### RAW URLs (rellenar con el usuario/branch reales)
 
 ```
-app.py            → https://raw.githubusercontent.com/__GH_USER__/paddleocr-duo-gpu/main/app.py
-requirements.txt  → https://raw.githubusercontent.com/__GH_USER__/paddleocr-duo-gpu/main/requirements.txt
-bootstrap.sh      → https://raw.githubusercontent.com/__GH_USER__/paddleocr-duo-gpu/main/bootstrap.sh
+app.py            → https://raw.githubusercontent.com/Zarushy09/paddleocr-duo-gpu/main/app.py
+requirements.txt  → https://raw.githubusercontent.com/Zarushy09/paddleocr-duo-gpu/main/requirements.txt
+bootstrap.sh      → https://raw.githubusercontent.com/Zarushy09/paddleocr-duo-gpu/main/bootstrap.sh
 ```
 
 ---
@@ -45,7 +45,7 @@ bootstrap.sh      → https://raw.githubusercontent.com/__GH_USER__/paddleocr-du
 3. **START COMMAND** del pod (descarga y ejecuta el bootstrap, con fallback curl→wget):
 
    ```bash
-   bash -c "curl -sL https://raw.githubusercontent.com/__GH_USER__/paddleocr-duo-gpu/main/bootstrap.sh | bash || wget -qO- https://raw.githubusercontent.com/__GH_USER__/paddleocr-duo-gpu/main/bootstrap.sh | bash"
+   bash -c "curl -sL https://raw.githubusercontent.com/Zarushy09/paddleocr-duo-gpu/main/bootstrap.sh | bash || wget -qO- https://raw.githubusercontent.com/Zarushy09/paddleocr-duo-gpu/main/bootstrap.sh | bash"
    ```
 
    El primer arranque instala deps + descarga/calienta modelos (varios minutos) y

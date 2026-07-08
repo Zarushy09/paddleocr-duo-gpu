@@ -15,7 +15,7 @@
 set -euo pipefail
 
 # Base RAW del repo. Overrideable por env (util para forks/branches).
-RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com/__GH_USER__/paddleocr-duo-gpu/main}"
+RAW_BASE="${RAW_BASE:-https://raw.githubusercontent.com/Zarushy09/paddleocr-duo-gpu/main}"
 APP_DIR="${DUO_DIR:-/root/paddleocr-duo-gpu}"
 READY="/root/.duo_ready"
 PORT="${PORT:-8014}"
