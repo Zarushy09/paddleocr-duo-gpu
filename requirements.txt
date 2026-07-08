@@ -1,0 +1,10 @@
+# paddlepaddle-gpu YA viene en la imagen base (3.2.2-gpu-cuda12.6-cudnn9.5) — NO se
+# reinstala aqui para no romper la build GPU. Solo paddleocr (misma version que
+# produccion) + el stack web. Pins alineados con los motores v6/v6small certificados.
+paddleocr==3.7.0
+fastapi==0.115.0
+uvicorn==0.30.0
+python-multipart==0.0.9
+Pillow==10.4.0
+pydantic==2.9.0
+opencv-python-headless==4.10.0.84
