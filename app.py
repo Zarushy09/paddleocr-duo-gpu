@@ -50,7 +50,7 @@ IOU_THRESHOLD = 0.45
 MIN_DIGITS_DIVERGENCE = 6
 # Techo de resolucion del pre-paso del DUO: solo reescala si la imagen es PESADA
 # (> RESIZE_MIN_MP MP) Y su lado largo supera RESIZE_MAX_DIM px. Certificadas (<=4 MP) intactas.
-RESIZE_MAX_DIM = 2000
+RESIZE_MAX_DIM = int(os.getenv("DUO_RESIZE_MAX_DIM", "2000"))
 RESIZE_MIN_MP = 4.0
 # Load shedding adaptativo POR WORKER. Default 64 = "adaptativo dormido": bajo carga
 # normal jamas se dispara (imposible tener >64 requests en vuelo por worker aqui), asi

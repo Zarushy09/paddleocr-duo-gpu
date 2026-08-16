@@ -20,7 +20,7 @@ se **mide y reporta** en `fusion_stats`).
 |---|---|
 | `app.py` | El agregador DUO-GPU (ambos pipelines en proceso, misma API `/ocr`). |
 | `requirements.txt` | `paddleocr==3.7.0` (versión de producción) + FastAPI/uvicorn/Pillow/opencv/pydantic. **`paddlepaddle-gpu` NO se instala: lo aporta la imagen base del pod.** |
-| `bootstrap.sh` | Self-install idempotente que corre dentro del pod: descarga código, `pip install`, **calienta modelos** (dummy medium+small → descarga y cachea pesos), `touch /root/.duo_ready`, lanza `uvicorn ... :8014 --workers 2`. |
+| `bootstrap.sh` | Self-install idempotente que corre dentro del pod: descarga código, instala `libgl1`+`libglib2.0-0` (cv2 necesita `libGL.so.1`), `pip install`, **calienta modelos** (dummy medium+small → descarga y cachea pesos), `touch /root/.duo_ready`, lanza `uvicorn ... :8014 --workers ${UVICORN_WORKERS:-5}`. |
 
 ### RAW URLs (rellenar con el usuario/branch reales)
 
@@ -61,7 +61,8 @@ bootstrap.sh      → https://raw.githubusercontent.com/Zarushy09/paddleocr-duo-
 ```bash
 curl -s http://<POD_HOST>:8014/health
 # {"status":"healthy","service":"paddleocr-duo-gpu","version":"gpu-1",
-#  "device":"gpu","engines":["small","medium"],"shed_inflight":64,"max_dimension":4096}
+#  "device":"gpu","engines":["small","medium"],"workers":5,
+#  "shed_inflight":64,"max_dimension":4096}
 ```
 
 `POST /ocr` (base64 de una imagen; misma API que el duo actual):
@@ -111,7 +112,8 @@ Respuesta (mismo esquema que el duo v2.2, con timings extra en `fusion_stats`):
   **small** no la tiene (igual que en producción).
 - **Pre-paso de motor** (RGB, techo 4096px, `enhance_for_ocr` sharpen+CLAHE) y
   **kill-switch CJK** idénticos byte a byte.
-- **Agregador**: `preprocess_image` (exif_transpose + techo 2000px si >4 MP),
+- **Agregador**: `preprocess_image` (exif_transpose + techo `DUO_RESIZE_MAX_DIM`, 2000px
+  por defecto, sólo si además la imagen supera 4 MP),
   fusión dedup IoU>0.45 con alternas de divergencia numérica (≥6 dígitos),
   reordenado por bandas de línea, y `DUO_SHED_INFLIGHT` (default **64** =
   "adaptativo dormido": bajo carga normal nunca descarta, ambos motores siempre).
@@ -121,6 +123,55 @@ Respuesta (mismo esquema que el duo v2.2, con timings extra en `fusion_stats`):
 | Env | Default | Efecto |
 |---|---|---|
 | `DUO_DEVICE` | `auto` | `gpu` / `cpu` fuerzan device; `auto` detecta. |
-| `DUO_SHED_INFLIGHT` | `64` | Umbral de load-shed por worker (>umbral → solo small). |
+| `DUO_SHED_INFLIGHT` | `64` | Umbral de load-shed **por worker** (in_flight > umbral → sólo small). **`0` fuerza modo un-motor (small-only) permanente**: `in_flight` siempre vale ≥1 dentro de `/ocr`, así que el shed dispara en todas las requests. Ver §"Modo un-motor". |
+| `DUO_RESIZE_MAX_DIM` | `2000` | Techo de resolución **del agregador** (`preprocess_image`), en px de lado largo. Sólo actúa si además la imagen supera 4 MP. **No es el techo del motor**: ése es `MAX_IMAGE_DIMENSION = 4096`, fijo. Ver §"Modo un-motor" para el valor de equivalencia. |
+| `UVICORN_WORKERS` | `5` | Procesos uvicorn que lanza `bootstrap.sh`. **Cada worker carga los 2 pipelines** ⇒ 5 workers = 10 pipelines en VRAM. `app.py` sólo la lee para reportarla en `/health`. |
 | `OCR_THREADS` | `4` | Hilos CPU (cv2 + paddle cpu_threads; sólo relevante en CPU-fallback). |
 | `PORT` | `8014` | Puerto de escucha. |
+| `RAW_BASE` | `…/paddleocr-duo-gpu/main` | Base RAW desde la que `bootstrap.sh` descarga `app.py` y `requirements.txt`. Apuntarla a un **commit inmutable** en vez de a `main` para fijar la versión que corre el pod. |
+
+---
+
+## Modo un-motor (small-only) y equivalencia con el small standalone
+
+Configuración usada en el cutover de producción, para que el pod GPU sea equivalente al
+motor `PP-OCRv6_small` standalone que corría en Oracle (`:8013`):
+
+```
+DUO_SHED_INFLIGHT=0
+DUO_RESIZE_MAX_DIM=100000
+```
+
+**`DUO_SHED_INFLIGHT=0`** → todas las requests entran por la rama de shed: sólo corre el
+motor small, la respuesta trae `engines_used:["small"]`, `alternates:[]` y
+`fusion_stats.load_shed:true`, y el campo `text` se devuelve **tal cual lo produce el motor**
+(`"\n".join(lines)`, orden crudo del motor) — es decir, sin la reordenación por bandas de la
+fusión y sin la sección de lecturas alternas, exactamente igual que el small standalone.
+Ojo: **los dos pipelines se siguen cargando en VRAM**; esta palanca ahorra cómputo por
+request, no memoria.
+
+**`DUO_RESIZE_MAX_DIM=100000`** → desactiva de hecho el techo del agregador. El motivo es de
+equivalencia byte a byte, y por eso no basta con igualarlo al techo del motor (4096):
+
+- Con el default **2000**, una imagen de 3000×2000 (6 MP) llega al motor reescalada a 2000 px,
+  mientras el small standalone la procesa a 3000 px completos. Imágenes distintas ⇒ OCR distinto.
+- Con **4096**, esa clase se arregla, pero las imágenes de más de 4096 px **siguen reescalándose
+  por una ruta distinta** a la del standalone: el agregador usa `img.thumbnail(...)` + re-encode
+  JPEG q92, y el standalone usa `int(w*scale)` + `LANCZOS` sobre los bytes originales. Para
+  5000×4000 eso da 4096×**3277** frente a 4096×**3276**, más una recompresión JPEG. La
+  divergencia se reduce, pero no desaparece.
+- Con **100000** la condición `max(w,h) > DUO_RESIZE_MAX_DIM` no se cumple nunca en la práctica,
+  `preprocess_image` devuelve el base64 **intacto** (cero re-encode) y todo el trabajo del techo
+  lo hace `engine_preprocess`, que es **AST-idéntica** al `preprocess_image` del servicio v6small
+  certificado (mismo `convert("RGB")`, mismo `MAX_IMAGE_DIMENSION=4096`, mismo `int(w*scale)`,
+  mismo `LANCZOS`, mismo `enhance_for_ocr`). La clase entera de divergencia desaparece en vez
+  de reducirse.
+
+### Divergencia deliberada que se conserva: `exif_transpose`
+
+El agregador aplica `ImageOps.exif_transpose` (y el re-encode JPEG q95 que conlleva) a las
+imágenes con `EXIF orientation != 1`, **antes** de la decisión de shed. El small standalone de
+Oracle **no lo hace**. Esa diferencia **se mantiene a propósito**: es una mejora, no un bug —
+Oracle procesaba esas imágenes giradas. Quien evalúe el gate de equivalencia debe esperar que
+las imágenes con EXIF rotado difieran del baseline de Oracle, y que la lectura del pod sea la
+correcta de las dos.
