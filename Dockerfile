@@ -47,8 +47,18 @@ RUN python -m pip check || echo "[build] pip check con avisos (ver arriba)"
 RUN command -v python > /app/.app_python
 
 # 2) Pesos dentro de la imagen (el worker arranca sin descargar nada).
+#    El build no tiene GPU ni driver, y paddlepaddle-gpu necesita libcuda.so.1 solo
+#    para importarse. Se le da el "stub" de CUDA SOLO en este paso: no queda en la
+#    imagen ni en LD_LIBRARY_PATH (en el worker, Runpod monta el driver real).
 COPY warm_models.py diag.py ./
-RUN DUO_DEVICE=cpu python warm_models.py
+RUN set -e; \
+    STUB="$(ls /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/targets/*/lib/stubs/libcuda.so 2>/dev/null | head -n1)"; \
+    [ -n "$STUB" ] || STUB="$(find / -xdev -path '*stubs*' -name 'libcuda.so' 2>/dev/null | head -n1)"; \
+    if [ -z "$STUB" ]; then echo "[build] ERROR: la imagen base no trae el stub libcuda.so"; exit 1; fi; \
+    echo "[build] stub de CUDA para el calentado: $STUB"; \
+    mkdir -p /tmp/cudastub; ln -sf "$STUB" /tmp/cudastub/libcuda.so.1; \
+    LD_LIBRARY_PATH="/tmp/cudastub:${LD_LIBRARY_PATH}" DUO_DEVICE=cpu python warm_models.py; \
+    rm -rf /tmp/cudastub
 # Huella en el log del build: versiones, pesos (sha256) y freeze. Se compara con el pod.
 RUN python diag.py
 
