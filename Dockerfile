@@ -20,7 +20,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
     DUO_APP_DIR=/app \
     DUO_PORT=8014 \
-    UVICORN_WORKERS=5
+    DUO_DEVICE=gpu \
+    UVICORN_WORKERS=2 \
+    OCR_THREADS=2 \
+    DUO_RESIZE_MAX_DIM=100000 \
+    DUO_SHED_INFLIGHT=64
+
+# Las cinco variables del DUO son LAS MISMAS del pod de producción
+# (pregnant_brown_fish, leídas el 12-oct-2026). DUO_RESIZE_MAX_DIM=100000 apaga el
+# techo de resolución del agregador y OCR_THREADS cambia la salida: no tocarlas
+# sin repetir la puerta de byte-identidad.
 
 # Mismas librerías nativas que instala el bootstrap.sh del pod (cv2 → libGL.so.1).
 RUN apt-get update \

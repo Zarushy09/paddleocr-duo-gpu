@@ -16,7 +16,7 @@ El cambio de URL en n8n (§7) va en ventana de mantenimiento, con el pod encendi
 | `Dockerfile` | Misma base que el pod (`paddlepaddle/paddle:3.2.2-gpu-cuda12.6-cudnn9.5`), mismos paquetes, **pesos dentro de la imagen** (se bajan en el build con `device=cpu`). |
 | `constraints-pod.txt` | Versiones fijadas a las del pod. **Confirmar con el `pip freeze` del pod antes del primer build.** |
 | `warm_models.py` | Baja los 6 modelos (texto medium/small + orientación) y falla el build si falta alguno. |
-| `handler.py` | Worker de Runpod. Arranca el mismo `app.py` (uvicorn, 5 workers) en `127.0.0.1:8014` y le reenvía cada trabajo. Vive en su propio entorno (`/opt/rp`, Python 3.11): el SDK de Runpod exige fastapi ≥0.141 y el OCR usa 0.115. |
+| `handler.py` | Worker de Runpod. Arranca el mismo `app.py` (uvicorn, 2 workers, como el pod) en `127.0.0.1:8014` y le reenvía cada trabajo. Vive en su propio entorno (`/opt/rp`, Python 3.11): el SDK de Runpod exige fastapi ≥0.141 y el OCR usa 0.115. |
 | `requirements-handler.txt` | `runpod==1.12.0` y `aiohttp` (solo para el handler). |
 | `diag.py` | Huella del entorno (versiones, sha256 de los pesos, GPU, variables del DUO). Corre igual en el pod y en el worker. |
 | `tools/comparar_pod_vs_serverless.py` | Puerta de byte-identidad: misma imagen al pod y al endpoint, compara campo por campo y mide el arranque en frío. Corre desde el Contabo. |
@@ -79,9 +79,9 @@ Runpod → **Serverless → New Endpoint → Import Git Repository** → `paddle
 | Idle timeout | **60 s** | Un lote amortiza un solo arranque. Se ajusta con lo medido. |
 | Execution timeout | **120 s** | Tope por trabajo (n8n manda el suyo de 30 s). |
 | FlashBoot | **On** | Acelera los arranques repetidos. |
-| Auto-scaling | **Request count = 5** | Un worker atiende 5 imágenes a la vez (5 procesos uvicorn). |
+| Auto-scaling | **Request count = 2** | Un worker atiende 2 imágenes a la vez (2 procesos uvicorn, como el pod). |
 | Advanced → CUDA | **12.6 o superior** (marcar 12.6, 12.7, 12.8, 12.9, 13.0) | La imagen es CUDA 12.6: un host con driver más viejo no la arranca. |
-| Environment variables | `UVICORN_WORKERS=5` + las que tenga el pod (§2) | |
+| Environment variables | Ninguna: la imagen ya trae las del pod (`DUO_DEVICE=gpu`, `UVICORN_WORKERS=2`, `OCR_THREADS=2`, `DUO_RESIZE_MAX_DIM=100000`, `DUO_SHED_INFLIGHT=64`) | Si se cambian aquí, cambia la salida: repetir §6. |
 
 **Deploy Endpoint** → pestaña **Builds**: *Pending → Building → Uploading → Testing → Completed*.
 Límites de Runpod: el `docker build` debe terminar en 30 min y todo el proceso en 160 min.
