@@ -1,0 +1,12 @@
+# Versiones fijadas a las del pod de producción (pregnant_brown_fish, m6sl8l3btyvtln).
+# Objetivo: que el worker serverless instale EXACTAMENTE lo mismo que el pod, para
+# que la salida del OCR sea idéntica byte a byte.
+#
+# PENDIENTE DE CONFIRMAR con el pod. En su terminal web:
+#   curl -sL https://raw.githubusercontent.com/Zarushy09/paddleocr-duo-gpu/serverless/diag.py | python - --freeze
+# y reemplazar este archivo por esa salida (sin líneas "@ file://").
+#
+# Mientras tanto: paddleocr 3.7.0 exige paddlex >=3.7.0,<3.8.0. Las tres 3.7.x salieron
+# antes de que se instalara el pod (31/08/2026), así que pip le dio la 3.7.2.
+paddleocr==3.7.0
+paddlex==3.7.2

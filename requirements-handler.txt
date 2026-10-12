@@ -1,0 +1,3 @@
+# Entorno del handler (/opt/rp, Python 3.11). NO es el entorno del OCR.
+runpod==1.12.0
+aiohttp>=3.14.3
