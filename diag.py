@@ -77,6 +77,23 @@ def modelos() -> dict:
     return res
 
 
+def modelos_archivos() -> list:
+    """Huella archivo por archivo (sha256[:16], tamaño, ruta): separa pesos de metadatos."""
+    base = os.path.join(cache_dir(), "official_models")
+    out = []
+    if not os.path.isdir(base):
+        return out
+    for root, _dirs, files in sorted(os.walk(base)):
+        for fn in sorted(files):
+            p = os.path.join(root, fn)
+            h = hashlib.sha256()
+            with open(p, "rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
+            out.append(f"{h.hexdigest()[:16]} {os.path.getsize(p)} {os.path.relpath(p, base)}")
+    return sorted(out, key=lambda x: x.split(" ", 2)[2])
+
+
 def gpu() -> dict:
     try:
         o = subprocess.run(["nvidia-smi", "--query-gpu=name,driver_version,memory.total",
@@ -130,6 +147,7 @@ def main() -> None:
         "freeze_sha256": hashlib.sha256("\n".join(fz).encode()).hexdigest()[:16],
         "paquetes": len(fz),
         "modelos_sha256": modelos(),
+        "modelos_archivos": modelos_archivos(),
         "gpu": gpu(),
         "env": env_uvicorn(),
         "app_py": app_sha(),
