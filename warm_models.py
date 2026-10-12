@@ -27,6 +27,28 @@ kw = dict(
 )
 dummy = np.full((480, 640, 3), 255, dtype=np.uint8)
 
+# Imagen con texto para calentar los procesos del worker al arrancar (handler.py).
+# Se genera aquí, en el entorno del OCR (Pillow), y queda en /app/warm.jpg.
+try:
+    from PIL import Image, ImageDraw, ImageFont
+
+    lineas = ["FACTURA DE CREDITO FISCAL", "RNC: 101137142", "NCF: B0100000001",
+              "FECHA: 12/10/2026", "SUBTOTAL 1,000.00", "ITBIS 18% 180.00", "TOTAL RD$ 1,180.00"]
+    lienzo = Image.new("RGB", (900, 120 + 70 * len(lineas)), "white")
+    pincel = ImageDraw.Draw(lienzo)
+    try:
+        fuente = ImageFont.load_default(size=40)
+    except Exception:  # noqa: BLE001
+        fuente = ImageFont.load_default()
+    for i, t in enumerate(lineas):
+        pincel.text((40, 50 + 70 * i), t, fill="black", font=fuente)
+    destino = os.path.join(os.path.dirname(os.path.abspath(__file__)), "warm.jpg")
+    lienzo.save(destino, quality=92)
+    dummy = np.array(lienzo)
+    print(f"[warm] imagen de calentado: {destino}", flush=True)
+except Exception as e:  # noqa: BLE001
+    print(f"[warm] AVISO: sin imagen de calentado ({e}); se usa lienzo en blanco", flush=True)
+
 for nombre, det, rec in [("medium", "PP-OCRv6_medium_det", "PP-OCRv6_medium_rec"),
                          ("small", "PP-OCRv6_small_det", "PP-OCRv6_small_rec")]:
     print(f"[warm] {nombre}: instanciando + inferencia dummy ...", flush=True)

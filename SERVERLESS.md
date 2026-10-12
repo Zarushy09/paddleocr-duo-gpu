@@ -40,7 +40,12 @@ Respuesta:
   primer nivel (y si no es null marca el trabajo como fallido).
 - Otros inputs: `{"warmup": true}` (despierta el worker y confirma que está listo) y
   `{"diagnostico": true}` (huella completa del entorno).
-- Si el OCR local no responde, el trabajo termina `FAILED` con `error`: para n8n es «no respondió».
+- Si un proceso del OCR se cae a mitad de una imagen (visto el 12-oct: SIGSEGV de Paddle en
+  `MatmulKernel` en un host con driver 580; el pod con driver 595 no lo ha tenido), uvicorn lo
+  relanza solo y el handler repite la misma imagen en el proceso sano. Queda anotado en
+  `output.rp.reintento`. Si aun así no responde, el trabajo termina `FAILED` → «no respondió» en n8n.
+- Al arrancar, el worker calienta cada proceso uvicorn con `warm.jpg` (texto sintético) para que
+  la primera factura real no pague los ~6 s de la primera pasada por la GPU.
 
 ---
 

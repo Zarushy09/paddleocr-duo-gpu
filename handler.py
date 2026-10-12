@@ -24,12 +24,14 @@ y n8n lo trata como «no respondió» (rama de Reintento).
 """
 
 import asyncio
+import base64
 import json
 import os
 import subprocess
 import sys
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 import aiohttp
 import runpod
@@ -43,6 +45,12 @@ CONCURRENCY = int(os.getenv("JOB_CONCURRENCY", str(WORKERS)))
 STARTUP_TIMEOUT = int(os.getenv("DUO_STARTUP_TIMEOUT", "600"))
 REQUEST_TIMEOUT = float(os.getenv("DUO_REQUEST_TIMEOUT", "120"))
 BASE = f"http://127.0.0.1:{PORT}"
+# Si un proceso del OCR se cae a mitad de un trabajo (visto: SIGSEGV de Paddle en
+# MatmulKernel con el driver de algunos hosts), uvicorn lo vuelve a levantar solo y
+# el otro proceso sigue vivo. El handler espera /health y repite la MISMA imagen
+# una vez: la salida es determinista, así que reintentar no cambia el resultado.
+RETRY_WAIT = float(os.getenv("DUO_RETRY_WAIT", "90"))
+WARM_IMAGE = os.path.join(APP_DIR, "warm.jpg")
 
 
 def _log(msg: str) -> None:
@@ -114,6 +122,43 @@ _T_BOOT = time.time()
 SERVER = start_server()
 STARTUP_S = wait_ready(SERVER)
 _log(f"DUO listo en {STARTUP_S:.1f} s (workers={WORKERS}, concurrencia={CONCURRENCY})")
+
+
+def warm_processes() -> dict:
+    """Primera inferencia de cada proceso uvicorn ANTES de aceptar trabajos.
+
+    La primera pasada por la GPU de cada proceso tarda ~6 s (carga de kernels);
+    se manda una imagen con texto varias veces en paralelo para que pasen todos.
+    No cambia ninguna salida: cada petición al DUO es independiente.
+    """
+    if not os.path.isfile(WARM_IMAGE):
+        return {"omitido": "sin warm.jpg"}
+    with open(WARM_IMAGE, "rb") as f:
+        data = json.dumps({"image_base64": base64.b64encode(f.read()).decode(),
+                           "imagen_nombre": "warmup.jpg"}).encode()
+
+    def uno(_i):
+        t = time.time()
+        try:
+            req = urllib.request.Request(BASE + "/ocr", data=data, method="POST",
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as r:
+                ok = json.loads(r.read().decode()).get("success") is True
+            return {"ok": ok, "ms": int((time.time() - t) * 1000)}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "ms": int((time.time() - t) * 1000), "error": f"{type(e).__name__}: {e}"}
+
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=WORKERS * 2) as ex:
+        res = list(ex.map(uno, range(WORKERS * 2)))
+    if not all(r["ok"] for r in res):
+        # Si el calentado tumbó un proceso, uvicorn lo relanza: esperar a que esté sano.
+        wait_ready(SERVER)
+    return {"s": round(time.time() - t0, 1), "peticiones": res}
+
+
+WARM = warm_processes()
+_log(f"calentado: {json.dumps(WARM, ensure_ascii=False)}")
 DIAG = run_diag()
 _log("diagnóstico: " + json.dumps({k: DIAG.get(k) for k in ("versiones", "modelos_sha256", "gpu", "env")}, ensure_ascii=False))
 
@@ -131,6 +176,25 @@ async def _health() -> dict:
     s = await _get_session()
     async with s.get(BASE + "/health") as r:
         return await r.json()
+
+
+async def _esperar_sano(limite_s: float) -> bool:
+    t = time.time()
+    while time.time() - t < limite_s:
+        if SERVER.poll() is not None:
+            return False
+        try:
+            await _health()
+            return True
+        except Exception:  # noqa: BLE001
+            await asyncio.sleep(1)
+    return False
+
+
+async def _post_ocr(payload: dict):
+    s = await _get_session()
+    async with s.post(BASE + "/ocr", json=payload) as r:
+        return r.status, await r.text()
 
 
 async def handler(job: dict) -> dict:
@@ -154,18 +218,29 @@ async def handler(job: dict) -> dict:
         return {"error": "input.image_base64 vacío o inválido"}
 
     payload = {"image_base64": img, "imagen_nombre": inp.get("imagen_nombre")}
+    reintento = None
     try:
-        s = await _get_session()
-        async with s.post(BASE + "/ocr", json=payload) as r:
-            body = await r.text()
-            if r.status != 200:
-                return {"error": f"DUO HTTP {r.status}: {body[:500]}"}
-            duo = json.loads(body)
+        try:
+            status, body = await _post_ocr(payload)
+        except (aiohttp.ServerDisconnectedError, aiohttp.ClientConnectionError) as e:
+            # Se cayó el proceso que atendía esta imagen: esperar /health y repetir una vez.
+            caida = f"{type(e).__name__}: {e}"
+            _log(f"CAIDA del proceso OCR ({caida}) con {inp.get('imagen_nombre')!r}: reintento")
+            t_r = time.time()
+            if not await _esperar_sano(RETRY_WAIT):
+                return {"error": f"DUO sin respuesta tras caída: {caida}"}
+            status, body = await _post_ocr(payload)
+            reintento = {"caida": caida, "espera_ms": int((time.time() - t_r) * 1000)}
+        if status != 200:
+            return {"error": f"DUO HTTP {status}: {body[:500]}"}
+        duo = json.loads(body)
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         return {"error": f"DUO sin respuesta: {type(e).__name__}: {e}"}
 
-    return {"duo": duo, "rp": {"worker_ms": int((time.time() - t0) * 1000),
-                               "arranque_s": round(STARTUP_S, 1)}}
+    rp = {"worker_ms": int((time.time() - t0) * 1000), "arranque_s": round(STARTUP_S, 1)}
+    if reintento:
+        rp["reintento"] = reintento
+    return {"duo": duo, "rp": rp}
 
 
 if __name__ == "__main__":
