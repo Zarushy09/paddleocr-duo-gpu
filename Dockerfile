@@ -50,7 +50,7 @@ RUN command -v python > /app/.app_python
 #    El build no tiene GPU ni driver, y paddlepaddle-gpu necesita libcuda.so.1 solo
 #    para importarse. Se le da el "stub" de CUDA SOLO en este paso: no queda en la
 #    imagen ni en LD_LIBRARY_PATH (en el worker, Runpod monta el driver real).
-COPY warm_models.py diag.py ./
+COPY warm_models.py diag.py modelos-pod.txt freeze-pod.txt ./
 RUN set -e; \
     STUB="$(ls /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/targets/*/lib/stubs/libcuda.so 2>/dev/null | head -n1)"; \
     [ -n "$STUB" ] || STUB="$(find / -xdev -path '*stubs*' -name 'libcuda.so' 2>/dev/null | head -n1)"; \

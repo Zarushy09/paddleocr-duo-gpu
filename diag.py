@@ -77,6 +77,17 @@ def modelos() -> dict:
     return res
 
 
+def freeze_vs_pod(fz: list):
+    """Diferencias contra freeze-pod.txt (si existe junto a este script)."""
+    ref = os.path.join(os.path.dirname(os.path.abspath(__file__)), "freeze-pod.txt")
+    if not os.path.isfile(ref):
+        return None
+    norm = lambda x: x.strip().lower().replace("_", "-")  # noqa: E731
+    pod = {norm(x) for x in open(ref, encoding="utf-8") if x.strip()}
+    aqui = {norm(x) for x in fz if x.strip()}
+    return {"solo_aqui": sorted(aqui - pod), "solo_pod": sorted(pod - aqui)}
+
+
 def modelos_archivos() -> list:
     """Huella archivo por archivo (sha256[:16], tamaño, ruta): separa pesos de metadatos."""
     base = os.path.join(cache_dir(), "official_models")
@@ -148,6 +159,7 @@ def main() -> None:
         "paquetes": len(fz),
         "modelos_sha256": modelos(),
         "modelos_archivos": modelos_archivos(),
+        "freeze_vs_pod": freeze_vs_pod(fz),
         "gpu": gpu(),
         "env": env_uvicorn(),
         "app_py": app_sha(),

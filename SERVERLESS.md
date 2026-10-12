@@ -1,5 +1,7 @@
 # DUO-GPU en Runpod Serverless (rama `serverless`)
 
+**Endpoint:** `duo-ocr-serverless` · ID `bwpucttw3jezoe` · solo RTX 4000 Ada · CUDA ≥ 12.6 · 0–2 workers · idle 60 s · FlashBoot.
+
 **Objetivo:** mover el OCR del pod fijo (`pregnant_brown_fish`, RTX 4000 Ada, USD 0.29/h las 24 h)
 a un endpoint serverless que escala a cero, **sin cambiar ni un carácter de la salida**.
 
@@ -14,7 +16,8 @@ El cambio de URL en n8n (§7) va en ventana de mantenimiento, con el pod encendi
 |---|---|
 | `app.py`, `requirements.txt` | **Sin cambios**: los mismos de `main`, los que corre el pod. |
 | `Dockerfile` | Misma base que el pod (`paddlepaddle/paddle:3.2.2-gpu-cuda12.6-cudnn9.5`), mismos paquetes, **pesos dentro de la imagen** (se bajan en el build con `device=cpu`). |
-| `constraints-pod.txt` | Versiones fijadas a las del pod. **Confirmar con el `pip freeze` del pod antes del primer build.** |
+| `constraints-pod.txt`, `freeze-pod.txt` | `pip freeze` exacto del pod (12-oct-2026). El build instala esas versiones y `diag.py` reporta cualquier diferencia (`freeze_vs_pod`). |
+| `modelos-pod.txt` | sha256 de los 20 archivos de pesos/config del pod. **El build falla si un solo archivo difiere.** |
 | `warm_models.py` | Baja los 6 modelos (texto medium/small + orientación) y falla el build si falta alguno. |
 | `handler.py` | Worker de Runpod. Arranca el mismo `app.py` (uvicorn, 2 workers, como el pod) en `127.0.0.1:8014` y le reenvía cada trabajo. Vive en su propio entorno (`/opt/rp`, Python 3.11): el SDK de Runpod exige fastapi ≥0.141 y el OCR usa 0.115. |
 | `requirements-handler.txt` | `runpod==1.12.0` y `aiohttp` (solo para el handler). |
@@ -77,9 +80,9 @@ Runpod → **Serverless → New Endpoint → Import Git Repository** → `paddle
 | Max workers | **2** | Para pruebas; la cuenta permite 5 en total. |
 | GPUs per worker | 1 | |
 | Idle timeout | **60 s** | Un lote amortiza un solo arranque. Se ajusta con lo medido. |
-| Execution timeout | **120 s** | Tope por trabajo (n8n manda el suyo de 30 s). |
+| Execution timeout | **300 s** | Tope por trabajo (n8n manda el suyo de 30 s). Runpod avisa si es < 300 s. |
 | FlashBoot | **On** | Acelera los arranques repetidos. |
-| Auto-scaling | **Request count = 2** | Un worker atiende 2 imágenes a la vez (2 procesos uvicorn, como el pod). |
+| Auto-scaling | **Queue delay = 2 s** | Con *Request count* Runpod desactiva el idle timeout y cada lote pagaría arranques. Cada worker atiende 2 imágenes a la vez (2 procesos uvicorn, como el pod). |
 | Advanced → CUDA | **12.6 o superior** (marcar 12.6, 12.7, 12.8, 12.9, 13.0) | La imagen es CUDA 12.6: un host con driver más viejo no la arranca. |
 | Environment variables | Ninguna: la imagen ya trae las del pod (`DUO_DEVICE=gpu`, `UVICORN_WORKERS=2`, `OCR_THREADS=2`, `DUO_RESIZE_MAX_DIM=100000`, `DUO_SHED_INFLIGHT=64`) | Si se cambian aquí, cambia la salida: repetir §6. |
 
@@ -87,7 +90,7 @@ Runpod → **Serverless → New Endpoint → Import Git Repository** → `paddle
 Límites de Runpod: el `docker build` debe terminar en 30 min y todo el proceso en 160 min.
 En el log del build deben aparecer `[warm] caché completa` y la línea JSON de `diag.py`.
 
-Actualizar el worker más adelante = **crear un Release en GitHub** (un push solo no reconstruye).
+Actualizar el worker = **push a la rama `serverless`** (cada push reconstruye y despliega solo; no hacer push durante una prueba).
 Volver atrás = pestaña Builds → ⋯ → **Rollback**.
 
 ---

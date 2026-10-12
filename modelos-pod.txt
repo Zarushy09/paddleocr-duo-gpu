@@ -1,0 +1,22 @@
+# Pesos del pod de producción (pregnant_brown_fish), leídos con diag.py el 12-oct-2026.
+# sha256[:16]  bytes  ruta relativa a official_models. warm_models.py exige que coincidan.
+e49f6be2fe403423 2561 PP-LCNet_x1_0_doc_ori/config.json
+3580978602f309c3 104441 PP-LCNet_x1_0_doc_ori/inference.json
+e8d6e7c5d264507e 6754166 PP-LCNet_x1_0_doc_ori/inference.pdiparams
+9e195eb729a81735 766 PP-LCNet_x1_0_doc_ori/inference.yml
+c1a2576f9713adab 2487 PP-LCNet_x1_0_textline_ori/config.json
+b81929eeaff8e52d 104399 PP-LCNet_x1_0_textline_ori/inference.json
+0de2bcf996cf553e 6743918 PP-LCNet_x1_0_textline_ori/inference.pdiparams
+8d5120d0e1a30a9d 735 PP-LCNet_x1_0_textline_ori/inference.yml
+0f1a7ec35da36173 312150 PP-OCRv6_medium_det/inference.json
+85218d2e3d98f5a2 61960476 PP-OCRv6_medium_det/inference.pdiparams
+7298d5ead546584a 886 PP-OCRv6_medium_det/inference.yml
+0b2e25e990bd072f 221814 PP-OCRv6_medium_rec/inference.json
+1b01c79a91458793 76465087 PP-OCRv6_medium_rec/inference.pdiparams
+991b700facf5b50a 150580 PP-OCRv6_medium_rec/inference.yml
+89240f689a4a77aa 229307 PP-OCRv6_small_det/inference.json
+5043d4ccc8d63402 9817888 PP-OCRv6_small_det/inference.pdiparams
+193f435274bf9f0b 885 PP-OCRv6_small_det/inference.yml
+f0bf53c853937a91 208004 PP-OCRv6_small_rec/inference.json
+406e1e689c9a7fbb 21074618 PP-OCRv6_small_rec/inference.pdiparams
+ab078671bb49f062 150579 PP-OCRv6_small_rec/inference.yml

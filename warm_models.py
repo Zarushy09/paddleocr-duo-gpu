@@ -46,3 +46,36 @@ if faltan or len(presentes) < 6:
     print(f"[warm] ERROR: caché incompleta. Faltan {faltan}; presentes={len(presentes)}", flush=True)
     sys.exit(1)
 print("[warm] caché completa: la imagen arranca sin descargar nada.", flush=True)
+
+# Puerta de pesos: cada archivo de pesos/config debe ser IDÉNTICO al del pod de producción.
+import hashlib  # noqa: E402
+
+manifiesto = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modelos-pod.txt")
+if os.path.isfile(manifiesto):
+    malos = []
+    for linea in open(manifiesto, encoding="utf-8"):
+        linea = linea.strip()
+        if not linea or linea.startswith("#"):
+            continue
+        h_pod, tam_pod, ruta = linea.split(" ", 2)
+        p = os.path.join(base, ruta)
+        if not os.path.isfile(p):
+            malos.append(f"FALTA {ruta}")
+            continue
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        h_aqui, tam_aqui = h.hexdigest()[:16], os.path.getsize(p)
+        if h_aqui != h_pod or str(tam_aqui) != tam_pod:
+            malos.append(f"DISTINTO {ruta}: pod {h_pod}/{tam_pod} vs build {h_aqui}/{tam_aqui}")
+    for m in sorted(os.listdir(base)):
+        meta = os.path.join(base, m, ".cache", "huggingface", "download", "inference.pdiparams.metadata")
+        if os.path.isfile(meta):
+            print(f"[warm] {m} revisión HF: {open(meta).readline().strip()}", flush=True)
+    if malos:
+        print("[warm] ERROR: los pesos NO son los del pod:\n  " + "\n  ".join(malos), flush=True)
+        sys.exit(1)
+    print("[warm] pesos idénticos a los del pod (manifiesto modelos-pod.txt).", flush=True)
+else:
+    print("[warm] AVISO: sin modelos-pod.txt, no se verificaron los pesos contra el pod.", flush=True)
