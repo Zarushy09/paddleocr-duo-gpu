@@ -10,6 +10,15 @@ Este archivo corre en un entorno aparte (/opt/rp, Python 3.11 con el SDK de
 Runpod). El SDK exige fastapi>=0.141 y el app.py certificado usa fastapi 0.115:
 mezclarlos en un solo entorno cambiaría el servidor del OCR. Por eso van separados.
 
+Arranque en frío (v2, 13-oct-2026). Solo cambia el ORDEN del arranque; app.py,
+pesos, variables y la salida del OCR quedan iguales:
+  1. uvicorn se lanza ANTES de importar el SDK de Runpod y aiohttp (~1,5 s que
+     ahora corren mientras el DUO carga los modelos).
+  2. /health se consulta cada 0,25 s (antes cada 1 s).
+  3. diag.py ya no corre al arrancar: se calcula la primera vez que llega
+     {"diagnostico": true} y queda guardado.
+  4. La salida lleva rp.boot con los tiempos de cada fase, para medir desde n8n.
+
 Contrato del trabajo (input):
   {"image_base64": "...", "imagen_nombre": "..."}   → OCR normal
   {"warmup": true}                                    → solo confirma que está listo
@@ -23,18 +32,19 @@ Si el servidor local no responde: {"error": "..."} → el trabajo queda FAILED
 y n8n lo trata como «no respondió» (rama de Reintento).
 """
 
-import asyncio
-import base64
-import json
-import os
-import subprocess
-import sys
 import time
-import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 
-import aiohttp
-import runpod
+_T_BOOT = time.time()  # primera línea útil: todo rp.boot se mide desde aquí
+
+import asyncio  # noqa: E402
+import base64  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+import threading  # noqa: E402
+import urllib.request  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
 
 APP_DIR = os.getenv("DUO_APP_DIR", "/app")
 PORT = int(os.getenv("DUO_PORT", "8014"))
@@ -44,6 +54,7 @@ WORKERS = int(os.getenv("UVICORN_WORKERS", "5"))
 CONCURRENCY = int(os.getenv("JOB_CONCURRENCY", str(WORKERS)))
 STARTUP_TIMEOUT = int(os.getenv("DUO_STARTUP_TIMEOUT", "600"))
 REQUEST_TIMEOUT = float(os.getenv("DUO_REQUEST_TIMEOUT", "120"))
+HEALTH_POLL_S = float(os.getenv("DUO_HEALTH_POLL_S", "0.25"))
 BASE = f"http://127.0.0.1:{PORT}"
 # Si un proceso del OCR se cae a mitad de un trabajo (visto: SIGSEGV de Paddle en
 # MatmulKernel con el driver de algunos hosts), uvicorn lo vuelve a levantar solo y
@@ -102,7 +113,7 @@ def wait_ready(proc: subprocess.Popen) -> float:
                     return time.time() - t0
         except Exception:  # noqa: BLE001 — todavía cargando modelos
             pass
-        time.sleep(1)
+        time.sleep(HEALTH_POLL_S)
     raise RuntimeError(f"/health no respondió en {STARTUP_TIMEOUT} s")
 
 
@@ -118,9 +129,19 @@ def run_diag() -> dict:
 
 
 # ---------------------------------------------------------------- arranque
-_T_BOOT = time.time()
+# 1) El DUO primero: la carga de modelos es lo más largo del arranque.
+_T_SERVER = time.time()
 SERVER = start_server()
-STARTUP_S = wait_ready(SERVER)
+
+# 2) Mientras el DUO carga, importar el SDK de Runpod y aiohttp (~1,5 s).
+import aiohttp  # noqa: E402
+import runpod  # noqa: E402
+
+_T_IMPORTS = time.time()
+
+# 3) Esperar a que el DUO esté sano.
+wait_ready(SERVER)
+STARTUP_S = time.time() - _T_SERVER  # desde que se lanzó uvicorn hasta /health 200 (mismo sentido que antes)
 _log(f"DUO listo en {STARTUP_S:.1f} s (workers={WORKERS}, concurrencia={CONCURRENCY})")
 
 
@@ -157,10 +178,33 @@ def warm_processes() -> dict:
     return {"s": round(time.time() - t0, 1), "peticiones": res}
 
 
+_T_WARM0 = time.time()
 WARM = warm_processes()
+_T_READY = time.time()
 _log(f"calentado: {json.dumps(WARM, ensure_ascii=False)}")
-DIAG = run_diag()
-_log("diagnóstico: " + json.dumps({k: DIAG.get(k) for k in ("versiones", "modelos_sha256", "gpu", "env")}, ensure_ascii=False))
+
+# Tiempos del arranque (segundos). total = desde que Python empezó hasta aceptar trabajos.
+BOOT = {
+    "imports_s": round(_T_IMPORTS - _T_SERVER, 2),      # SDK + aiohttp, en paralelo a la carga
+    "modelos_s": round(STARTUP_S, 2),                   # uvicorn lanzado → /health 200
+    "calentado_s": round(_T_READY - _T_WARM0, 2),       # primera pasada de cada proceso
+    "total_s": round(_T_READY - _T_BOOT, 2),
+}
+_log("arranque: " + json.dumps(BOOT))
+
+# 4) diag.py ya no va en el arranque: se calcula al primer {"diagnostico": true}.
+_DIAG = None
+_DIAG_LOCK = threading.Lock()
+
+
+def get_diag() -> dict:
+    global _DIAG
+    with _DIAG_LOCK:
+        if _DIAG is None:
+            _DIAG = run_diag()
+            _log("diagnóstico: " + json.dumps({k: _DIAG.get(k) for k in ("versiones", "modelos_sha256", "gpu", "env")}, ensure_ascii=False))
+        return _DIAG
+
 
 _session = None
 
@@ -207,11 +251,13 @@ async def handler(job: dict) -> dict:
 
     if inp.get("warmup"):
         return {"warm": True, "health": await _health(),
-                "rp": {"arranque_s": round(STARTUP_S, 1), "worker_ms": int((time.time() - t0) * 1000)}}
+                "rp": {"arranque_s": round(STARTUP_S, 1), "boot": BOOT,
+                       "worker_ms": int((time.time() - t0) * 1000)}}
 
     if inp.get("diagnostico"):
-        return {"diagnostico": DIAG, "health": await _health(),
-                "rp": {"arranque_s": round(STARTUP_S, 1)}}
+        diag = await asyncio.get_running_loop().run_in_executor(None, get_diag)
+        return {"diagnostico": diag, "health": await _health(),
+                "rp": {"arranque_s": round(STARTUP_S, 1), "boot": BOOT}}
 
     img = inp.get("image_base64")
     if not img or not isinstance(img, str):
@@ -237,7 +283,7 @@ async def handler(job: dict) -> dict:
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         return {"error": f"DUO sin respuesta: {type(e).__name__}: {e}"}
 
-    rp = {"worker_ms": int((time.time() - t0) * 1000), "arranque_s": round(STARTUP_S, 1)}
+    rp = {"worker_ms": int((time.time() - t0) * 1000), "arranque_s": round(STARTUP_S, 1), "boot": BOOT}
     if reintento:
         rp["reintento"] = reintento
     return {"duo": duo, "rp": rp}
